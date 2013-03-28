@@ -71,6 +71,80 @@ class ClojureAutoTelnetRepl(sublime_plugin.WindowCommand):
         self.window.run_command("repl_open", {"type":"telnet", "encoding":"utf8", "host":"localhost", "port":port,
                                 "external_id":"clojure", "syntax":"Packages/Clojure/Clojure.tmLanguage"})
 
+class ClojureLeinConnectRepl(sublime_plugin.WindowCommand):
+    def is_running(self, port_str):
+        """Check if port is open on localhost"""
+        port = int(port_str)
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        res = s.connect_ex(("127.0.0.1", port))
+        s.close()
+        return res == 0
+
+    def choices(self):
+        choices = []
+        for folder in self.window.folders():
+            proj_file = os.path.join(folder, "project.clj")
+            try:
+                with open(proj_file) as f:
+                    data = f.read()
+                    port_match = re.search(":repl-port\s+(\d{1,})", data)
+                    if not port_match:
+                        continue
+                    port = port_match.group(1)
+                    description = proj_file
+                    desc_match = re.search(r':description\s+"([^"]+)"', data)
+                    if desc_match:
+                        description = desc_match.group(1)
+                    if self.is_running(port):
+                        description += " (active)"
+                    else:
+                        description += " (not responding)"
+                    choices.append([description, port])
+            except IOError, e:
+                pass  # just ignore it, no file or no access
+
+        return choices + [["Custom telnet", "Pick your own port number to Lein REPL"]]
+
+    def run(self):
+        choices = self.choices()
+        if len(choices) == 1: #only custom action
+            self.on_done(choices, 0)
+        else:
+            on_done = partial(self.on_done, choices)
+            self.window.show_quick_panel(self.choices(), on_done)
+
+    def on_done(self, choices, index):
+        if index == -1:
+            return
+        if index == len(choices) - 1:
+            self.window.show_input_panel("Enter port number", "",
+                                         self.open_repl,
+                                         None, None)
+            return
+        self.open_repl(choices[index][1])
+
+    def open_repl(self, port_str):
+        try:
+            int(port_str)
+        except ValueError:
+            return
+        args = {
+            "type": "subprocess",
+            "encoding": "utf8",
+            "cmd": {"windows": ["lein.bat", "repl", ":connect", port_str],
+                    "linux": ["lein", "repl", ":connect", port_str],
+                    "osx":  ["lein", "repl", ":connect", port_str]},
+            "soft_quit": "\n(. System exit 0)\n",
+            "cwd": {"windows":"c:/Clojure",
+            "linux": "$file_path",
+            "osx": "$file_path"},
+            "syntax": "Packages/Clojure/Clojure.tmLanguage",
+            "external_id": "clojure",
+            "extend_env": {"INSIDE_EMACS": "1"}
+        }
+
+        self.window.run_command("repl_open", args)
+
 
 def scan_for_virtualenvs(venv_paths):
     bin_dir = "Scripts" if os.name == "nt" else "bin"
